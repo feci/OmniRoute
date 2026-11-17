@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { getProviderConnections } from "@/lib/db/providers";
 import { resolveProxyForConnection } from "@/lib/db/settings";
+import { getApiKeyMetadata, isModelAllowedForKey } from "@/lib/db/apiKeys";
+import { extractApiKey } from "@/sse/services/auth";
+import { getModelInfo } from "@/sse/services/model";
 import { isModelExcludedByConnection } from "@/domain/connectionModelRules";
 import { getCodexCliRsHeaders } from "@/shared/constants/codexClient";
 import {
@@ -54,11 +57,19 @@ type Dependencies = {
   publicCatalog: typeof getUnifiedModelsResponse;
   connections: () => Promise<Connection[]>;
   fetchCatalog: (connection: Connection, version: string, signal: AbortSignal) => Promise<Response>;
+  bareAliasAllowed: (request: Request, model: string) => Promise<boolean>;
 };
 
 const defaults: Dependencies = {
   publicCatalog: getUnifiedModelsResponse,
   connections: () => getProviderConnections({ provider: "codex", isActive: true }),
+  bareAliasAllowed: async (request, model) => {
+    const target = await getModelInfo(model);
+    if (target.provider !== "codex" || target.model !== model) return false;
+    const key = extractApiKey(request);
+    const metadata = key ? await getApiKeyMetadata(key) : null;
+    return !metadata || metadata.id === "env-key" || isModelAllowedForKey(key, model);
+  },
   fetchCatalog: async (connection, version, signal) => {
     const data = (connection.providerSpecificData || {}) as Record<string, unknown>;
     const account = [data.workspaceId, data.chatgptAccountId, data.accountId].find(
@@ -146,6 +157,11 @@ export async function getCodexRemoteCatalogResponse(
           const slug = [`codex/${model.slug}`, `cx/${model.slug}`].find((id) => allowed.has(id));
           if (!slug || models.has(slug)) continue;
           models.set(slug, { ...model, slug, upgrade: null });
+          // Existing sessions and internal reviewer overrides still use bare
+          // names. Keep their full metadata without duplicating picker entries.
+          if (await deps.bareAliasAllowed(request, model.slug)) {
+            models.set(model.slug, { ...model, visibility: "hide", upgrade: null });
+          }
         }
       } catch {
         // Never expose upstream bodies, tokens or exception messages.
