@@ -58,11 +58,13 @@ type Dependencies = {
   connections: () => Promise<Connection[]>;
   fetchCatalog: (connection: Connection, version: string, signal: AbortSignal) => Promise<Response>;
   bareAliasAllowed: (request: Request, model: string) => Promise<boolean>;
+  keyMetadata: (key: string) => Promise<{ allowedConnections?: string[] } | null>;
 };
 
 const defaults: Dependencies = {
   publicCatalog: getUnifiedModelsResponse,
   connections: () => getProviderConnections({ provider: "codex", isActive: true }),
+  keyMetadata: getApiKeyMetadata,
   bareAliasAllowed: async (request, model) => {
     const target = await getModelInfo(model);
     if (target.provider !== "codex" || target.model !== model) return false;
@@ -123,7 +125,13 @@ export async function getCodexRemoteCatalogResponse(
   const models = new Map<string, Model>();
   let succeeded = false;
   try {
-    const connections = await deps.connections();
+    const key = extractApiKey(request);
+    const metadata = key ? await deps.keyMetadata(key) : null;
+    const connections = (await deps.connections()).filter(
+      (connection) =>
+        !metadata?.allowedConnections?.length || metadata.allowedConnections.includes(connection.id)
+    );
+    if (connections.length === 0) return catalogJsonResponse({ models: [] }, headers);
     const signal = AbortSignal.any([request.signal, AbortSignal.timeout(8_000)]);
     // Sequential, with one total deadline: bounded upstream traffic even on large
     // account pools. Profiles from the highest-priority eligible account win.
