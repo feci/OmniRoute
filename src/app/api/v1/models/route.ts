@@ -3,6 +3,7 @@ import { after } from "next/server";
 import { getUnifiedModelsResponse } from "./catalog";
 import { getFilteredCatalogResponse } from "./catalogDiscovery";
 import { hasCatalogDiscoveryParams } from "./catalogFilters";
+import { getCodexRemoteCatalogResponse } from "./codexRemoteCatalog";
 
 /**
  * Handle CORS preflight
@@ -38,6 +39,9 @@ export async function HEAD() {
  * `min_context`, `kind`, `q`. Without any of them the response is untouched.
  */
 export async function GET(request: Request) {
+  if (new URL(request.url).searchParams.get("format") === "codex") {
+    return getCodexRemoteCatalogResponse(request);
+  }
   if (hasCatalogDiscoveryParams(new URL(request.url).searchParams)) {
     return getFilteredCatalogResponse(request, (catalogRequest) =>
       getUnifiedModelsResponse(
