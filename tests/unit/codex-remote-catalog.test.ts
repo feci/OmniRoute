@@ -32,6 +32,7 @@ const dependencies = (overrides: Partial<Deps> = {}): Deps => ({
   connections: async () => [{ id: "account-one", accessToken: "upstream-token" }],
   fetchCatalog: async () => Response.json({ models: [model()] }),
   bareAliasAllowed: async () => false,
+  keyMetadata: async () => null,
   ...overrides,
 });
 
@@ -260,4 +261,30 @@ test("authorized bare routes retain full metadata for resumed sessions without p
     { ...model(), slug: "codex/new-model", upgrade: null },
     { ...model(), visibility: "hide", upgrade: null },
   ]);
+});
+
+test("API key connection allowlists exclude other accounts before fetching metadata", async () => {
+  const fetched: string[] = [];
+  const deps = dependencies({
+    keyMetadata: async (key) => {
+      assert.equal(key, "gateway-key");
+      return { allowedConnections: ["permitted"] };
+    },
+    connections: async () => [
+      { id: "blocked", accessToken: "one" },
+      { id: "permitted", accessToken: "two" },
+    ],
+    fetchCatalog: async (c) => {
+      fetched.push(c.id);
+      return Response.json({ models: [model()] });
+    },
+  });
+  assert.equal((await getCodexRemoteCatalogResponse(request(), deps)).status, 200);
+  assert.deepEqual(fetched, ["permitted"]);
+  const empty = await getCodexRemoteCatalogResponse(request(), {
+    ...deps,
+    keyMetadata: async () => ({ allowedConnections: ["unavailable"] }),
+  });
+  assert.deepEqual(await empty.json(), { models: [] });
+  assert.deepEqual(fetched, ["permitted"]);
 });
