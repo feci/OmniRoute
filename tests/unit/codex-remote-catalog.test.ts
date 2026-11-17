@@ -31,6 +31,7 @@ const dependencies = (overrides: Partial<Deps> = {}): Deps => ({
   publicCatalog: async () => Response.json({ data: [{ id: "codex/new-model" }] }),
   connections: async () => [{ id: "account-one", accessToken: "upstream-token" }],
   fetchCatalog: async () => Response.json({ models: [model()] }),
+  bareAliasAllowed: async () => false,
   ...overrides,
 });
 
@@ -242,4 +243,21 @@ test("rejects missing and invalid client versions before making network requests
     );
     assert.equal(response.status, 400);
   }
+});
+
+test("authorized bare routes retain full metadata for resumed sessions without picker duplicates", async () => {
+  const response = await getCodexRemoteCatalogResponse(
+    request(),
+    dependencies({
+      bareAliasAllowed: async (r, slug) => {
+        assert.equal(r.headers.get("authorization"), "Bearer gateway-key");
+        return slug === "new-model";
+      },
+    })
+  );
+  const body = await response.json();
+  assert.deepEqual(body.models, [
+    { ...model(), slug: "codex/new-model", upgrade: null },
+    { ...model(), visibility: "hide", upgrade: null },
+  ]);
 });
